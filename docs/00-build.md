@@ -48,7 +48,7 @@ for this lab, installed and configured entirely by hand.
   facts from the authoritative source, not from a description that can be stale.
 
 ## Evidence
-(insert a screenshot of the /etc/os-release output and/or the login prompt)
+(a screenshot of the /etc/os-release output)
 
 <img width="2197" height="1956" alt="image" src="https://github.com/user-attachments/assets/28c2b530-714f-483b-9ccd-4fd6df03df43" />
 
