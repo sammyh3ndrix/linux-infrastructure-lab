@@ -1,0 +1,2 @@
+Socket activation confusion. systemctl status ssh showed inactive (dead) and disabled, which looked like SSH was off. But ssh.socket was active (listening) on 0.0.0.0:22. Modern Ubuntu uses socket activation: systemd listens on port 22 and starts sshd on demand. Lesson: don't panic at an "inactive" service, check what triggers it.
+The NAT wall (about to hit this). VM listens on port 22, but the host can't reach it because NAT is one-way. Fix: VirtualBox port forwarding, host port 2222 → guest port 22.
