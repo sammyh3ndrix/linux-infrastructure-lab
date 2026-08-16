@@ -23,6 +23,20 @@ foundation for running the machine like a real server.
   file itself (600), as required by sshd.
 - Reconnected over SSH and confirmed key-based login: no password prompt,
   straight to the shell.
+- Disabled password authentication in `/etc/ssh/sshd_config` and reloaded
+  the ssh service.
+- Discovered the change had no effect and diagnosed why using
+  `sudo sshd -T`, which reports sshd's actual resolved configuration.
+- Found the true cause: `/etc/ssh/sshd_config.d/50-cloud-init.conf`, a
+  drop-in file created by the installer, also set PasswordAuthentication
+  and was overriding my edit because it is included before the rest of
+  the main config is read.
+- Fixed the setting in that file, reloaded ssh, and confirmed with
+  `sshd -T` that the effective setting was finally `no`.
+- Verified the change two ways: a normal key-based login still worked
+  with no password prompt, and a login forced to skip the key
+  (`-o PubkeyAuthentication=no`) was rejected immediately with
+  "Permission denied (publickey)", no password prompt offered at all.
 
 ## Why
 - SSH is how Linux servers are administered in the real world. Nobody
@@ -61,12 +75,21 @@ foundation for running the machine like a real server.
   auth if `.ssh` or `authorized_keys` are too permissive. Set `chmod 700`
   on the directory and `chmod 600` on the file. Full permission model is
   Topic 5 material, treated this as a required convention for now.
+- **A config edit that silently didn't work.** Setting
+  `PasswordAuthentication no` in the main sshd_config had no effect,
+  because sshd_config supports an `Include` directive that pulls in
+  additional files, and sshd uses the first matching directive it reads,
+  not the last. A drop-in file from the installer, included near the top
+  of the config, was setting the value to `yes` before my edit further
+  down ever got read. Lesson: when a config change seems to do nothing,
+  don't assume the file you edited is the only one in play. `sshd -T`
+  shows the fully resolved, actual configuration and is the authoritative
+  way to check, not reading the file by eye.
 
 ## Evidence
 (insert screenshot of the successful SSH login from PowerShell)
 
 ## Still to do in this phase
-- Disable password authentication (key-only login).
 - Run the VM headless.
 
 <img width="1216" height="1100" alt="image" src="https://github.com/user-attachments/assets/b0c89ebd-a5b5-4069-8685-bba05acd0b37" />
