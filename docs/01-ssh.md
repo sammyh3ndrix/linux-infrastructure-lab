@@ -37,6 +37,11 @@ foundation for running the machine like a real server.
   with no password prompt, and a login forced to skip the key
   (`-o PubkeyAuthentication=no`) was rejected immediately with
   "Permission denied (publickey)", no password prompt offered at all.
+- Shut down the VM cleanly from inside the guest OS and restarted it
+  using VirtualBox's Headless Start option, so it now runs with no
+  display window at all.
+- Confirmed the machine remains fully reachable and administered
+  entirely over SSH with key-based authentication, no console required.
 
 ## Why
 - SSH is how Linux servers are administered in the real world. Nobody
@@ -89,7 +94,7 @@ foundation for running the machine like a real server.
 ## Evidence
 (insert screenshot of the successful SSH login from PowerShell)
 
-## Still to do in this phase
-- Run the VM headless.
+## Status
+Phase 1 complete.
 
 <img width="1216" height="1100" alt="image" src="https://github.com/user-attachments/assets/b0c89ebd-a5b5-4069-8685-bba05acd0b37" />
