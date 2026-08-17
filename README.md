@@ -20,7 +20,7 @@ the LPI Linux Essentials track and beyond.
 
 ## Roadmap
 - [x] Phase 0 — Build and base install
-- [ ] Phase 1 — SSH and remote access
+- [x] Phase 1 — SSH and remote access
 - [ ] Phase 2 — Filesystem and navigation
 - [ ] Phase 3 — Users, groups, and permissions
 - [ ] Phase 4 — System and network profile
