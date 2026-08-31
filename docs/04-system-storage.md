@@ -72,6 +72,15 @@ both changes from inside the guest with `lscpu` and `free -h`.
 - Switched back to NAT afterward and restored the headless/port-
   forwarding setup.
 
+  - Deliberately broke connectivity with `sudo ip route del default`,
+  without being told in advance what the command would do.
+- Diagnosed the break using the same tools from the profiling section:
+  `ping 8.8.8.8` failed with "Network is unreachable," and `ip route`
+  confirmed the `default via 10.0.2.2` entry was genuinely gone.
+- Restored it with `sudo ip route add default via 10.0.2.2`, then
+  confirmed full recovery: the default route reappeared in `ip route`,
+  and `ping 8.8.8.8` succeeded with real response times.
+
 ## Why
 Describing existing hardware and storage proves nothing on its own,
 provisioning new storage and swap from scratch, and proving each
@@ -149,6 +158,13 @@ two-way tradeoff is the actual lesson, not just "I can see more."
   fall back to the console for this test rather than SSH, and restore
   NAT afterward to get the familiar port-forwarding workflow back.
 
+  - **Checked the wrong command first when verifying the break.** After
+  deleting the route, checked `ip addr` and assumed nothing had
+  happened, since the output looked identical. Interface addresses and
+  the routing table are separate subsystems; deleting a route has no
+  effect on IP assignment. The actual confirmation needed `ip route`,
+  the specific thing that was modified, not just any related-sounding
+
 ## Evidence
 
 **Resource scaling, before → after:**
@@ -168,8 +184,9 @@ IP address, and the full nmap scan output)
 (insert terminal screenshots: lsblk/fdisk output for the new disk,
 the mount -a persistence test, the swapon -a persistence test)
 <img width="1493" height="1045" alt="image" src="https://github.com/user-attachments/assets/f03e7257-f853-429c-b964-78818394843e" />
+<img width="1508" height="1039" alt="image" src="https://github.com/user-attachments/assets/fd219495-d509-4571-a4f2-8fca57e6a616" />
+
 
 
 ## Still to do in this phase
-- Deliberate break-networking-then-diagnose exercise (the capstone
-  of Phase 4).
+none
