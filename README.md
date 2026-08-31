@@ -23,7 +23,7 @@ the LPI Linux Essentials track and beyond.
 - [x] Phase 1 — SSH and remote access
 - [x] Phase 2 — Filesystem and navigation
 - [x] Phase 3 — Users, groups, and permissions
-- [ ] Phase 4 — System and network profile
+- [x] Phase 4 — System and network profile
 - [ ] Phase 5 — Services
 - [ ] Phase 6 — Logging and monitoring
 - [ ] Phase 7 — Automation and CI
