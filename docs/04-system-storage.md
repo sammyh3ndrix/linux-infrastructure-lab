@@ -1,4 +1,4 @@
-# Phase 4 — System Profile and Storage (Part 1)
+# Phase 4 — System Profile, Storage, and Networking
 
 ## Goal
 Produce a complete, evidence-backed profile of the machine's hardware
@@ -42,6 +42,35 @@ both changes from inside the guest with `lscpu` and `free -h`.
 - Tested persistence by deactivating with `swapoff` and reactivating
   everything from fstab with `swapon -a`, confirming the same 4.8Gi
   total came back from the config alone.
+### Networking profile
+- **Interfaces:** confirmed two interfaces exist, `lo` (loopback,
+  127.0.0.1/::1) and `enp0s3` (the real connection, 10.0.2.15 under
+  NAT), using `ip -o addr show`.
+- **Routing:** inspected the routing table with `ip route`, found the
+  default route pointing to `10.0.2.2`, VirtualBox's virtual NAT
+  gateway. Also found an unexplained route to `192.168.1.1`.
+- **DNS:** read `/etc/resolv.conf`, found the nameserver is
+  `127.0.0.53`, a local loopback stub resolver run by
+  `systemd-resolved`, not a direct external DNS server. Used
+  `nslookup` to do a reverse lookup on the mystery `192.168.1.1`
+  address and got back the hostname `Docsis-Gateway`, confirming it
+  is my actual home router/cable modem, solving the routing table
+  mystery from earlier in the same session.
+
+### NAT vs Bridged comparison
+- Shut the VM down, switched the network adapter from NAT to Bridged
+  in VirtualBox, bridging to my physical Ethernet adapter.
+- Booted with the GUI console visible (not headless), since bridged
+  mode doesn't use the NAT port-forwarding SSH relies on.
+- Confirmed a new, real IP on my home network: `192.168.1.193/24`,
+  same subnet as the router discovered above.
+- Installed `nmap` and scanned the full subnet (`192.168.1.0/24`).
+  Found 5 live hosts: the router (`Docsis-Gateway`), a phone
+  (`iPhone`, running Apple's sync protocol on port 62078), my own VM
+  (`h3ndrixmachine`, now visible as an independent network device with
+  SSH exposed), a streaming device, and a networked printer.
+- Switched back to NAT afterward and restored the headless/port-
+  forwarding setup.
 
 ## Why
 Describing existing hardware and storage proves nothing on its own,
@@ -51,6 +80,14 @@ infrastructure work requires. This also mirrors genuine real-world
 tasks: cloud images frequently ship with no swap configured at all,
 and adding storage or swap after initial provisioning is routine
 sysadmin work.
+
+The NAT vs Bridged comparison demonstrates something that's easy to
+state abstractly but only really lands when proven: NAT isolates a
+VM from the local network in both directions, while Bridged makes it
+a full, visible peer on that network, also in both directions. The
+same scan that revealed five other devices also revealed my own VM,
+SSH port included, as visible to anyone else on that network. That
+two-way tradeoff is the actual lesson, not just "I can see more."
 
 ## What went wrong and what I learned
 
@@ -94,6 +131,24 @@ sysadmin work.
   command.** They're separate tools that each have their own `-a`
   flag for reloading their respective entries from fstab.
 
+- **Forgot my own console login credentials.** After weeks of
+  connecting exclusively over SSH with key-based auth, the raw
+  console login prompt (username and password typed by hand) had
+  become unfamiliar. A reminder that muscle memory narrows to
+  whichever access method you actually use day to day.
+- **A routing table mystery got solved by a completely different
+  tool later in the same session.** An unexplained route to
+  `192.168.1.1` sat unexplained through the whole routing profile,
+  then got resolved by an unrelated reverse DNS lookup during the DNS
+  section. A good reminder that Linux's various inspection tools
+  often corroborate each other; an answer from one command can
+  confirm a question raised by a completely different one.
+- **Switching to Bridged breaks the existing SSH workflow entirely.**
+  Port forwarding is NAT-specific; there's nothing to forward to in
+  Bridged mode since the VM has its own reachable address. Had to
+  fall back to the console for this test rather than SSH, and restore
+  NAT afterward to get the familiar port-forwarding workflow back.
+
 ## Evidence
 
 **Resource scaling, before → after:**
@@ -107,10 +162,12 @@ sysadmin work.
 |---|---|---|
 | Total swap | 3.8Gi | 4.8Gi |
 
+(also insert: the nslookup reverse lookup result, the new bridged
+IP address, and the full nmap scan output)
+
 (insert terminal screenshots: lsblk/fdisk output for the new disk,
 the mount -a persistence test, the swapon -a persistence test)
 
 ## Still to do in this phase
-- Networking profile (interfaces, routing, DNS).
-- NAT vs Bridged visibility comparison with `nmap`.
-- Deliberate break-networking-then-diagnose exercise.
+- Deliberate break-networking-then-diagnose exercise (the capstone
+  of Phase 4).
