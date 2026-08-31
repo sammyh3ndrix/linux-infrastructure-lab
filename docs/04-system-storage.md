@@ -167,6 +167,8 @@ IP address, and the full nmap scan output)
 
 (insert terminal screenshots: lsblk/fdisk output for the new disk,
 the mount -a persistence test, the swapon -a persistence test)
+<img width="1493" height="1045" alt="image" src="https://github.com/user-attachments/assets/f03e7257-f853-429c-b964-78818394843e" />
+
 
 ## Still to do in this phase
 - Deliberate break-networking-then-diagnose exercise (the capstone
