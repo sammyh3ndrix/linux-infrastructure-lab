@@ -91,6 +91,19 @@ Examined `/usr/lib/systemd/system/nginx.service` directly:
   request log (`/var/log/nginx/access.log`), separate from the
   systemd journal entirely, a different logging mechanism the
   application manages itself, not something systemd does for it.
+- Edited nginx's default site config
+  (`/etc/nginx/sites-available/default`), replacing the static
+  `location / { try_files ... }` block with a single reverse-proxy
+  directive: `proxy_pass http://127.0.0.1:8000;`.
+- Validated the config with `nginx -t` before applying anything
+  (the same test flag seen earlier inside nginx's own unit file).
+- Reloaded nginx with `systemctl reload` (rather than `restart`) to
+  apply the new config without dropping the running process.
+- Proved it worked: `curl localhost/health` (port 80, through nginx)
+  returned the identical response to `curl localhost:8000/health`
+  (the backend directly), confirming nginx is correctly forwarding
+  requests instead of serving its own content.
+  
 ## Why
 The goal was never "learn nginx," it was learning systemd mechanics
 using a real, working daemon as the vehicle, and proving each concept
@@ -129,6 +142,12 @@ current need actually requires.
   interactive program assumes a human typing in real time; a systemd
   service assumes nobody is there at all. Confirmed by an actual,
   reproducible crash, not a hypothetical.
+- Two typos in the `proxy_pass` line on the first attempt: `https`
+  instead of `http` (the backend has no TLS certificate configured,
+  it's plain HTTP), and `17.0.0.1` instead of `127.0.0.1` (a real,
+  unrelated public IP block, not the loopback address). Both caught
+  before reloading, thanks to reading the line carefully rather than
+  trusting it looked "close enough."
 
 ## Evidence
 <img width="2160" height="3801" alt="image" src="https://github.com/user-attachments/assets/afd4cfce-2a87-43e1-8313-4a9e2a150e6d" />
@@ -141,7 +160,4 @@ current need actually requires.
 
 
 ## Still to do in this phase
-- Wait for the FastAPI layer (Python side, in progress separately).
-- Deploy the finished FastAPI process as the real systemd service.
-- Apply `Restart=`, `User=`, and `Environment=` to that real service.
-- Continue into Phase 6 (logging) using the real service once it exists.
+complete
