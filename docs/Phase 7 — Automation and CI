@@ -1,0 +1,89 @@
+# Phase 7 — Automation and CI (Part 1: GitHub Actions)
+
+## Goal
+Set up a real Continuous Integration pipeline: automatically run the
+full pytest suite on every push to `main`, closing the gap in the
+project's delivery pipeline where broken code could otherwise reach the
+Linux staging VM without ever being verified.
+
+## What I did
+- Learned YAML as a new configuration format, indentation-based
+  structure, the same underlying idea as Python's own indentation
+  rules, but used for configuration rather than code.
+- Created `.github/workflows/ci.yaml`, the specific, required location
+  GitHub Actions watches for workflow definitions.
+- Built the workflow from scratch, piece by piece:
+  - `on: push: branches: [main]`, the trigger.
+  - `jobs: test: runs-on: ubuntu-latest`, a fresh, disposable machine
+    GitHub provisions on demand for each run.
+  - Four steps in sequence: check out the repository's code
+    (`actions/checkout@v4`), install a specific Python version
+    (`actions/setup-python@v5`), install dependencies
+    (`pip install -r requirements.txt`), and run the test suite
+    (`pytest -v`).
+- Pushed the workflow, watched it run live in GitHub's Actions tab, hit
+  a real failure, diagnosed it from the raw job logs, fixed it, pushed
+  again, and watched a second run go fully green.
+
+## Why
+A CI pipeline is the automated gate this project didn't have before,
+the point in the pipeline between "code written locally" and "code
+pulled onto the Linux VM" where correctness actually gets verified,
+without relying on a human remembering to run tests by hand every
+time. It also produces a real, visible signal (a pass/fail badge on
+every commit) that any outside reviewer can trust at a glance.
+
+## What went wrong and what I learned
+
+### Building the YAML (structural and conceptual mistakes)
+- **Mixed up `apt` and `pip`.** Wrote `sudo apt pip install -r
+  requirements.txt`, conflating the Linux system package manager with
+  Python's own package manager, two completely separate layers.
+  Corrected to the plain `pip install` command already used dozens of
+  times on the Linux VM.
+- **Tried to run the interactive CLI instead of the test suite.**
+  Wrote `python3 main.py` as the final step, which is the exact script
+  that crashed with `EOFError` back in Phase 5 when it had no
+  interactive terminal to read from, a GitHub Actions runner has no
+  terminal either, so this would have reproduced that same crash for
+  an unrelated reason. More fundamentally, running the *application*
+  was never the goal, CI exists to run the *tests* that verify the
+  application, a different tool entirely (`pytest`).
+- **Collapsed three steps into one by only using a single `-`.** Each
+  item in a YAML list needs its own `-` marker; without it, everything
+  underneath gets read as belonging to one step, producing invalid
+  duplicate keys (`name:` and `uses:` each defined multiple times
+  within what YAML saw as a single mapping).
+- **Referenced the wrong thing with `uses:`.** Initially pointed it at
+  my own GitHub username/repo, misunderstanding that `uses:` references
+  a separate, reusable, *published* action (in this case, GitHub's own
+  official `actions/checkout`), not the project's own repository.
+- **Guessed an action version that doesn't exist** (`v7` for
+  `setup-python`), and separately, conflated "the version of the action
+  I'm using" with "the version of my own project," when it's actually
+  the same concept as pinning `bcrypt==5.0.0` in `requirements.txt`,
+  a version of a dependency, unrelated to my own code's history.
+
+### The real CI failure, diagnosed from actual logs
+- The first real run failed with `Process completed with exit code 2`,
+  a generic summary that required digging into the actual job log to
+  understand.
+- Traced it to: `test_main.py` imports `fastapi.testclient.TestClient`,
+  which now hard-requires a package called `httpx2` (the same thing
+  flagged as a soft deprecation warning weeks earlier while testing on
+  the Linux VM, apparently since become a strict requirement). This
+  dependency had been dropped during an earlier `requirements.txt`
+  cleanup, since it's only needed for *testing*, not for the app to
+  run, so it wasn't obviously "missing" from a runtime perspective.
+- Added `httpx2` back to `requirements.txt`, pushed, and the second run
+  succeeded end to end in 28 seconds.
+
+## Evidence
+ 
+## Still to do in this phase
+- Bash automation scripts (a backup script, a health-check script),
+  the second half of Phase 7, tying back to Topic 3 scripting skills
+  from the cert.
+- Consider splitting `requirements.txt` into runtime vs. test-only
+  dependency files, a common real-world convention, flagged to the
+  Python side but not yet acted on.
