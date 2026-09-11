@@ -131,6 +131,28 @@ configure a console handler that could interfere with the journald path.
   lockout, and confirmed the resulting "Account is now locked" event is
   also correctly caught under the same `-p warning` filter.
 
+ ## What I did (continued): Sentry error capture verification
+
+- Pulled the Python side's temporary `/sentry-debug` route (a deliberate
+  `ZeroDivisionError`, added below `app = FastAPI()`, requiring no auth
+  or request body).
+- Restarted the service, confirmed clean startup.
+- Hit the route directly (`curl -i localhost/sentry-debug`), confirmed
+  a genuine `HTTP/1.1 500 Internal Server Error` response, correctly
+  passed through the nginx reverse proxy to the FastAPI backend.
+- Checked the Sentry dashboard and confirmed the real `ZeroDivisionError`
+  event arrived, with full stack trace and request context, not a
+  simulated or assumed result.
+- Confirmed the service remained fully healthy afterward
+  (`curl localhost/health` still returned `{"status":"healthy"}`),
+  proving one deliberately-triggered error didn't destabilize anything
+  else running under the same systemd-managed process.
+- Handed verification back to the Python side to remove the temporary
+  debug route, rerun the full test suite, and push the cleanup commit.
+
+## Still to do in this phase
+None. Phase 6 complete.
+
 ## Why this level of verification mattered
 Every step of this investigation could have stopped at "the text looks
 right" and been quietly wrong. Visually formatted output and journald's
@@ -167,13 +189,3 @@ actually proved the fix, not assumed it.
 
 ## Evidence
 
-## Still to do in this phase
-- Verify Sentry error reporting with a deliberate test exception
-  (temporary `/sentry-debug` route), confirm the event lands in the
-  Sentry dashboard, then remove the debug route.
-- Confirm the service remains healthy after the Sentry test.
-- Flag back to the Python side (not yet resolved): `systemd-python` is
-  Linux-only and cannot be installed on Windows at all. If it's ever
-  added unconditionally to the shared `requirements.txt`, that file
-  would fail to install on the Windows development side entirely. Needs
-  a pip environment marker (`systemd-python; sys_platform == "linux"`).
