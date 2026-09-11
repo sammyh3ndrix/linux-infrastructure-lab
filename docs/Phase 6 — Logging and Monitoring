@@ -1,0 +1,179 @@
+# Phase 6 — Logging and Monitoring (Part 1: The JournalHandler Investigation)
+
+## Goal
+Get Python application logging to pass real severity information natively
+into journald, so that `journalctl -p warning` (and other severity
+filters) work based on actual structured metadata, not on whether the
+word "WARNING" happens to appear somewhere in visible text.
+
+## Background: how this investigation started
+While verifying the newly-deployed Sentry integration, tested severity
+filtering on the application's failed-login logging (`logger.warning()`
+calls already existed in `authenticate_user()`). `journalctl -p warning`
+came back with only a stale, unrelated entry from days earlier, none of
+the fresh failed-login attempts showed up, despite the message genuinely
+reaching the journal.
+
+## My first hypothesis, and why it was wrong
+Initial diagnosis: the "Wrong password attempt" message had no visible
+level prefix in `journalctl` output (compare it to Uvicorn's own lines,
+which consistently show `INFO:`), so the working theory was that this
+message was still a leftover `print()` statement, never actually
+converted to real Python logging.
+
+**This was incorrect**, and the Python side caught it by checking the
+actual source: `authenticate_user()` genuinely calls `logger.warning(...)`
+for both failed attempts and lockouts, and `logger.info(...)` for
+successful logins. The `print()` hypothesis was a reasonable first guess
+given the symptom, but the real code already did the right thing.
+
+## The actual root cause
+With a real `logger.warning()` call confirmed, the question became: why
+does a genuinely leveled log message show up with no prefix and get
+missed by severity filtering? Two separate mechanisms combine to explain
+this fully:
+
+1. **`logging.getLogger(__name__)` with no handler configured anywhere**
+   doesn't fail silently, Python falls back to `logging.lastResort`, an
+   internal safety-net handler that only activates for `WARNING` and
+   above (which explains why `INFO` calls disappeared entirely while
+   `WARNING` calls at least printed something). Its default formatter is
+   bare `%(message)s`, no level name, no logger name, which is exactly
+   why the text showed up with zero prefix.
+2. **Even fixing the text formatting wouldn't have solved the actual
+   filtering problem.** journald assigns a message's `PRIORITY` based on
+   which *stream* it arrived on (stdout vs. a structured logging
+   protocol), not by parsing message text for keywords. A message that
+   visually says "WARNING: ..." but arrives as plain stdout still gets
+   journald's default priority, not a real warning-level tag.
+
+## The fix: `JournalHandler`
+The correct solution: bridge Python's logging levels directly into
+journald's native structured priority system using
+`systemd.journal.JournalHandler`, from the `systemd-python` package.
+`api.py` was updated to conditionally configure logging based on
+environment: on Linux, attach a `JournalHandler` to the shared logger;
+on Windows (where the `systemd` module doesn't exist at all), fall back
+to `logging.basicConfig()` with a real formatter instead. This required
+removing a temporary `basicConfig()` call that had been left in
+`main.py`, so importing `main.py` from `api.py` wouldn't silently
+configure a console handler that could interfere with the journald path.
+
+## What I did on the Linux side (deployment and verification)
+
+### Pulling and preparing
+- `git pull` brought down commit `367f7af` (the `JournalHandler`
+  conditional logic in `api.py`, and strengthened `caplog`-based tests
+  asserting real log *levels*, not just message text, on the Python
+  side).
+- Per the explicit plan, verified the `systemd` module's importability
+  **inside the venv specifically** before assuming anything, since this
+  project has repeatedly run into venv-isolation gaps (the exact same
+  category of mistake as the earlier Windows-venv and bloated
+  `requirements.txt` incidents).
+
+### The build-dependency chase
+- `systemd-python` was not installed in the venv (globally present on
+  the machine from weeks earlier, but that never extends into an
+  isolated venv).
+- `pip install systemd-python` failed immediately: unlike every other
+  dependency installed so far, this package has no pre-built wheel, it
+  ships as a source archive and must be **compiled** on install, since
+  it's a C extension wrapping `libsystemd`.
+- First build failure: missing `pkg-config` (a system-level build tool
+  used to locate library compile flags), not something `pip` can
+  install on its own. Installed via `apt`.
+- Second build failure, after fixing the first: missing the actual
+  `libsystemd` development headers and metadata
+  (`Package 'libsystemd' not found` in the pkg-config search path).
+  Installed `libsystemd-dev` via `apt`.
+- Third attempt: built and installed successfully.
+- Verified with a direct one-line import test
+  (`python3 -c "import systemd.journal"`) before touching the service at
+  all, confirming the module doesn't just install, it genuinely imports.
+
+### An unrelated account-lockout gotcha
+- Restarted the service cleanly, then attempted to trigger a real
+  successful login for testing purposes, and got rejected with
+  `Invalid Credentials` even with the correct password.
+- Checked the actual persisted `users.json` directly rather than
+  guessing, and found `sammy`'s account was still `"locked": true` from
+  a completely unrelated test, weeks earlier, when the raw CLI's
+  `EOFError` experiment was first run.
+- Fixed by **stopping the service first**, then hand-editing
+  `users.json` (`attempts: 0`, `locked: false`), then restarting, rather
+  than editing the file while the service was live, since the app likely
+  holds user data in memory and could silently overwrite a live edit on
+  its next save.
+
+### Verification, all the way down to raw journald fields
+- Triggered a genuine successful login, then inspected the entry with
+  `journalctl -u python-rbac.service -o verbose` (full structured field
+  dump, not just rendered text).
+- **The definitive evidence**: the app's log entry showed
+  `_TRANSPORT=journal` (not `stdout`, unlike every Uvicorn-generated
+  line around it), plus real Python `LogRecord` metadata fields that
+  only exist when a record travels through a structured handler:
+  `CODE_FILE`, `CODE_LINE`, `CODE_FUNC`, `LOGGER`. Plain stdout capture
+  could never produce these, journald has no way to know a text line
+  came from a specific file and function unless the actual record object
+  was handed off structurally.
+- **`PRIORITY=6`** (syslog "info") on the successful login, exactly
+  matching the `logger.info()` call.
+- Repeated the test with a failed login: **`PRIORITY=4`** (syslog
+  "warning"), same `_TRANSPORT=journal` and code-location metadata,
+  exactly matching `logger.warning()`.
+- Re-ran `journalctl -u python-rbac.service -p warning` and confirmed
+  the fresh failed-login entry now genuinely appears, proof the actual
+  filtering tool works, not just that the underlying field looks
+  correct in isolation.
+- Triggered three consecutive failed attempts to force a real account
+  lockout, and confirmed the resulting "Account is now locked" event is
+  also correctly caught under the same `-p warning` filter.
+
+## Why this level of verification mattered
+Every step of this investigation could have stopped at "the text looks
+right" and been quietly wrong. Visually formatted output and journald's
+actual structured `PRIORITY` metadata are two completely independent
+things, this whole saga exists specifically because trusting the
+former almost shipped a fix that still wouldn't have worked. Verifying
+against the raw `-o verbose` field dump, for every event type
+(success, failure, lockout), rather than the rendered text, is what
+actually proved the fix, not assumed it.
+
+## What went wrong and what I learned
+- **My own first hypothesis was wrong, and getting corrected was more
+  valuable than being right immediately.** Assuming "no prefix = still
+  a print()" was a reasonable but incomplete diagnosis. The actual
+  mechanism (a real leveled call, silently stripped by a fallback
+  handler with bare formatting) was more subtle and far more
+  instructive once understood properly.
+- **Compiled Python packages behave completely differently from pure
+  Python ones.** `systemd-python`'s two-stage build failure
+  (`pkg-config`, then `libsystemd-dev`) was a genuinely new category of
+  dependency problem for this project, previous issues were always
+  about venv isolation or bloated requirement lists, never an actual
+  system-level compiler dependency chain.
+- **Stale test data from weeks earlier silently blocked verification.**
+  The account lockout had nothing to do with the logging fix itself,
+  but would have looked like a fix failure if the actual persisted
+  state hadn't been checked directly instead of guessed at.
+- **Text formatting and journald's real priority metadata are separate
+  concerns, and conflating them was the whole reason this bug existed
+  in the first place.** The fix isn't "make the text say WARNING", it's
+  "make journald's structured field actually say warning", two very
+  different things that happen to look similar from a glance at
+  rendered log lines.
+
+## Evidence
+
+## Still to do in this phase
+- Verify Sentry error reporting with a deliberate test exception
+  (temporary `/sentry-debug` route), confirm the event lands in the
+  Sentry dashboard, then remove the debug route.
+- Confirm the service remains healthy after the Sentry test.
+- Flag back to the Python side (not yet resolved): `systemd-python` is
+  Linux-only and cannot be installed on Windows at all. If it's ever
+  added unconditionally to the shared `requirements.txt`, that file
+  would fail to install on the Windows development side entirely. Needs
+  a pip environment marker (`systemd-python; sys_platform == "linux"`).
