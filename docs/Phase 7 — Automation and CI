@@ -78,13 +78,117 @@ every commit) that any outside reviewer can trust at a glance.
 - Added `httpx2` back to `requirements.txt`, pushed, and the second run
   succeeded end to end in 28 seconds.
 
-## Evidence
+# Phase 7 — Automation and CI (Part 2: Bash Automation Scripts)
 
- 
-## Still to do in this phase
-- Bash automation scripts (a backup script, a health-check script),
-  the second half of Phase 7, tying back to Topic 3 scripting skills
-  from the cert.
-- Consider splitting `requirements.txt` into runtime vs. test-only
-  dependency files, a common real-world convention, flagged to the
-  Python side but not yet acted on.
+## Goal
+Build two Bash scripts that automate real operational tasks for the
+RBAC project: a backup script that protects the live `users.json`
+credential store, and a health-check script that verifies the whole
+service chain (nginx → uvicorn → FastAPI) is actually functioning, not
+just running.
+
+## What I did
+- Wrote `scripts/backup_rbac_users.sh`:
+  - Generates a sortable, filename-safe timestamp with
+    `date +%Y%m%d_%H%M%S`.
+  - Copies `users.json` into a dedicated `/var/backups/rbac_users/`
+    directory (kept separate from the project repo on purpose, backups
+    of a credential store don't belong in version control) as
+    `users_backup_<timestamp>.json`.
+  - Cleans up backups older than 7 days with
+    `find ... -mtime +7 -delete`.
+  - Proved the retention logic actually works, not just assumed to
+    work, by manually backdating a test file with `touch -d` and
+    confirming the cleanup command deleted it while leaving recent
+    backups untouched.
+- Wrote `scripts/health_check_rbac.sh`:
+  - Uses `curl -s -o /dev/null -w "%{http_code}"` to hit the API and
+    capture only the numeric HTTP status code.
+  - Checks `http://localhost/docs` (FastAPI's built-in docs page)
+    rather than `/`, since the app has no route defined at the root
+    path, that's the first thing I checked before landing on this.
+  - Reports "Healthy" on `200`, "Unhealthy" otherwise.
+  - Proved it catches a real failure, not just the happy path, by
+    stopping `python-rbac.service` with `systemctl stop`, rerunning the
+    script to confirm it correctly reported "Unhealthy" (a `502`, not a
+    `200`), then starting the service back up.
+- Made both scripts executable (`chmod +x`) and symlinked them into
+  `~/.local/bin`, a personal-scripts directory I added to `$PATH` via
+  `~/.bashrc`, so either script runs as a bare command from anywhere on
+  the VM instead of needing a full path or `bash` prefix.
+- Committed and pushed both scripts to this repo directly from the
+  Linux VM, which required configuring `git config --global user.email`
+  and `user.name` for the first time on this machine.
+
+## Why
+`users.json` is untracked in git (correctly, since it holds bcrypt
+password hashes and lockout state) and lives only on the VM's disk, so
+without a backup it's a single point of failure. A health check exists
+because "the process is running" and "the service actually works" are
+not the same claim, a hung or misconfigured app can pass a
+`systemctl status` check while still failing every real request.
+
+## What went wrong and what I learned
+
+### Backup script
+- Forgot the `$` sigil in `echo "timestamp"`, printing the literal word
+  instead of the variable's value, a direct callback to basic
+  variable-expansion rules.
+- Multiple wrong attempts at the `date` format string: missing the `+`
+  prefix entirely, a stray space between `+` and the format, using the
+  week-based year (`%G`) instead of the calendar year, and including a
+  colon-producing field (`%R`), which would have broken the filename.
+  Landed on `+%Y%m%d_%H%M%S`.
+- Introduced a stray `)`, a missing `sudo`, and a wrong variable name
+  (`$back_path` instead of the actually-defined `$backup_path`, which
+  would have silently expanded to nothing) in the `cp` line, then
+  repeated the same typo category (`$backp_path`) plus a missing
+  `sudo` again in the `find` cleanup line.
+- `ln -s` failed with "No such file or directory" because
+  `~/.local/bin` didn't actually exist yet, an earlier `mkdir -p` step
+  had been skipped. Also learned this VM doesn't auto-add
+  `~/.local/bin` to `$PATH` the way some distros do, had to add it to
+  `~/.bashrc` manually and `source` it.
+- Got a `Permission denied` running the script by bare name, since it
+  had only ever been run via `bash scriptname.sh` before, which
+  doesn't require the execute bit. Fixed with `chmod +x` on the real
+  file, the symlink's own permissions don't matter, only the target's
+  do.
+- First-ever `git commit` from this VM failed with "Author identity
+  unknown", since git had never been configured with an identity on
+  this machine before. Fixed with `git config --global user.email` and
+  `user.name`.
+
+### Health check script
+- First version checked `http://localhost/` and got a `404`, which
+  briefly looked like a failure but actually confirmed the opposite,
+  nginx and uvicorn were both up and responding, the app just has no
+  route defined at the root path. Switched to checking `/docs`, a route
+  guaranteed to exist by default in FastAPI.
+- On the first attempt to test the failure path, stopped and
+  immediately restarted the service without running the health check
+  in between, so nothing was actually verified. Had to redo it in the
+  correct order (stop → check → start) to actually observe the script
+  catch a real failure.
+- Confirmed a `502` (nginx up, can't reach uvicorn) is a distinct,
+  meaningful failure signature from a `404` (both up, wrong route) or a
+  connection refused (nginx itself down), useful for knowing what
+  "unhealthy" actually means in different failure modes.
+
+## Evidence
+$ bash backup_rbac_users.sh
+20260913_171226
+$ ls -l /var/backups/rbac_users/
+-rw-r--r-- 1 root root ... users_backup_20260913_171226.json
+-rw-r--r-- 1 root root ... users_backup_20260913_180501.json
+
+$ bash health_check_rbac.sh
+Healthy: http://localhost/docs returned 200
+
+$ sudo systemctl stop python-rbac.service
+$ bash health_check_rbac.sh
+Unhealthy: http://localhost/docs returned 502
+$ sudo systemctl start python-rbac.service
+
+$ git push
+d268db6..6f6ef6d main -> main
