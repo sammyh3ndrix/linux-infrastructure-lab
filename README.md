@@ -26,7 +26,7 @@ the LPI Linux Essentials track and beyond.
 - [x] Phase 4 — System and network profile
 - [x] Phase 5 — Services
 - [x] Phase 6 — Logging and monitoring
-- [ ] Phase 7 — Automation and CI
+- [x] Phase 7 — Automation and CI
 - [ ] Phase 8 — Hardening and capstone
 
 ## Documentation
